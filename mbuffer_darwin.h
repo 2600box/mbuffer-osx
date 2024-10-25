@@ -1,79 +1,47 @@
 #ifndef MBUFFER_DARWIN_H
 #define MBUFFER_DARWIN_H
 
-#include <mach/clock.h>
-#include <mach/mach.h>
-#include <sys/time.h>
-#include <semaphore.h>
-
+#include <dispatch/dispatch.h>
+#include <time.h>  // For clock_gettime
 
 /*
- * semaphores on OS X only work in named mode, ie, sem_open, but not
- * sem_init. The sem_wait and sem_port take the literal sem value, not
- * a ptr to it.
+ * Custom semaphore types and functions for macOS.
  */
 
-struct timespec ts;
+typedef dispatch_semaphore_t mbuffer_sem_t;
 
-static inline int mac_sem_init(sem_t *sem, int pshared, int value)
+static inline int mbuffer_sem_init(mbuffer_sem_t *sem, int pshared, unsigned int value)
 {
-    char *fname = strdup("/tmp/.mbuffer.XXXXXX");
-    mktemp(fname);
-    *sem = sem_open(fname, O_CREAT, 0600, value);
-    unlink(fname);
-    free(fname);
+    // pshared is ignored as GCD semaphores are not shared between processes
+    *sem = dispatch_semaphore_create(value);
+    return (*sem == NULL) ? -1 : 0;
+}
+
+static inline int mbuffer_sem_destroy(mbuffer_sem_t *sem)
+{
+    // No explicit destroy function; set the semaphore to NULL
+    *sem = NULL;
     return 0;
 }
 
-static inline int mac_sem_destroy(sem_t *sem)
+static inline int mbuffer_sem_wait(mbuffer_sem_t *sem)
 {
-    sem_close(sem);
+    // Wait indefinitely
+    return (dispatch_semaphore_wait(*sem, DISPATCH_TIME_FOREVER) == 0) ? 0 : -1;
+}
+
+static inline int mbuffer_sem_post(mbuffer_sem_t *sem)
+{
+    dispatch_semaphore_signal(*sem);
     return 0;
 }
 
-static inline int mac_sem_wait(sem_t *sem)
+static inline int mbuffer_sem_getvalue(mbuffer_sem_t *sem, int *value)
 {
-    return sem_wait(*sem);
-}
-
-static inline int mac_sem_post(sem_t *sem)
-{
-    return sem_post(*sem);
-}
-
-static inline int mac_sem_getvalue(sem_t *sem, int *value)
-{
-    *value = 0;
+    // GCD semaphores do not support getting the current value directly
+    // Return 0 or implement additional logic if necessary
+    *value = 0;  // Alternatively, maintain a separate counter
     return 0;
 }
 
-
-/*
- * Simulate Linux clock_gettime()
- */
-static inline int clock_gettime(unsigned long int id, struct timespec *ts)
-{
-    clock_serv_t cclock;
-    mach_timespec_t mts;
-    host_get_clock_service(mach_host_self(), CALENDAR_CLOCK, &cclock);
-    clock_get_time(cclock, &mts);
-    mach_port_deallocate(mach_task_self(), cclock);
-    ts->tv_sec = mts.tv_sec;
-    ts->tv_nsec = mts.tv_nsec;
-    return 0;
-}
-
-
-
-/* Other Linux porting wrappers */
-
-typedef unsigned long clockid_t;
-#define CLOCK_REALTIME 0
-
-#define sem_init mac_sem_init
-#define sem_destroy mac_sem_destroy
-#define sem_wait mac_sem_wait
-#define sem_post mac_sem_post
-#define sem_getvalue mac_sem_getvalue
-
-#endif
+#endif  // MBUFFER_DARWIN_H
